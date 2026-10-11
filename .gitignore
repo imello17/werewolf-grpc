@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+# generated from werewolf.proto (classmates regenerate with protoc):
+werewolf_pb2.py
+werewolf_pb2_grpc.py
+venv/

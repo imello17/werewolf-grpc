@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package werewolf;
+
+// ============================================================================
+// Werewolf over gRPC — service definition.
+//
+// ONE bidirectional streaming RPC carries the entire game for each player:
+//   client -> server : ClientMsg  (join, chat, vote)
+//   server -> client : ServerMsg  (events: role, phase, chat, death, prompts)
+//
+// This single stream is why the design is "pure bidi": a player opens Play()
+// once at connect and never makes another call. Everything — their actions up,
+// the moderator's events down — rides that one long-lived HTTP/2 stream.
+// ============================================================================
+
+service Werewolf {
+  // The whole game. First ClientMsg on the stream MUST be a JoinMsg;
+  // the server binds the stream to the assigned player_id and streams
+  // ServerMsgs back for the life of the game.
+  rpc Play(stream ClientMsg) returns (stream ServerMsg);
+}
+
+// ---------------------------------------------------------------------------
+// Client -> Server
+// ---------------------------------------------------------------------------
+message ClientMsg {
+  oneof kind {
+    JoinMsg join = 1;   // must be the first message on the stream
+    ChatMsg chat = 2;   // free chat during an allowed phase
+    VoteMsg vote = 3;   // a vote for a target during a voting phase
+  }
+}
+
+message JoinMsg {
+  string name = 1;      // display name the player wants
+}
+
+message ChatMsg {
+  string text = 1;
+}
+
+message VoteMsg {
+  string target = 1;    // name of the player being voted for
+}
+
+// ---------------------------------------------------------------------------
+// Server -> Client
+//
+// `scope` documents the comms pattern on the wire — this is the field that
+// makes unicast / multicast / broadcast explicit for the writeup:
+//   ALL      -> broadcast to every connected player
+//   WOLVES   -> multicast to the werewolf subset only
+//   PRIVATE  -> unicast to a single player
+// ---------------------------------------------------------------------------
+message ServerMsg {
+  enum Scope {
+    ALL = 0;
+    WOLVES = 1;
+    PRIVATE = 2;
+  }
+
+  enum Type {
+    INFO = 0;     // narration / system text
+    ROLE = 1;     // private role assignment
+    CHAT = 2;     // a chat line relayed from another player
+    PHASE = 3;    // phase transition marker
+    PROMPT = 4;   // "it's your turn to act" (vote now, etc.)
+    DEATH = 5;    // someone died
+    GAMEOVER = 6; // terminal
+  }
+
+  Type type = 1;
+  Scope scope = 2;   // which comms pattern delivered this message
+  string phase = 3;  // "lobby","night","day","vote","gameover"
+  string sender = 4; // "MODERATOR" or a player name, for CHAT
+  string text = 5;
+}
