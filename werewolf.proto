@@ -3,21 +3,23 @@ syntax = "proto3";
 package werewolf;
 
 // ============================================================================
-// Werewolf over gRPC — service definition.
+// Werewolf over gRPC (async) — service definition.
 //
 // ONE bidirectional streaming RPC carries the entire game for each player:
-//   client -> server : ClientMsg  (join, chat, vote)
+//   client -> server : ClientMsg  (join, chat, vote, role action)
 //   server -> client : ServerMsg  (events: role, phase, chat, death, prompts)
 //
-// This single stream is why the design is "pure bidi": a player opens Play()
-// once at connect and never makes another call. Everything — their actions up,
-// the moderator's events down — rides that one long-lived HTTP/2 stream.
+// Project 2 note: the wire contract is unchanged in shape (still one bidi
+// stream per player). What changed is the *server and client runtime*, which
+// moved from thread-per-stream (grpc + ThreadPoolExecutor) to asyncio
+// coroutines (grpc.aio). Two additions support the new roles:
+//   * ActionMsg   — a night action by a special role (doctor save, jester revenge)
+//   * Scope.GROUP — multicast to an arbitrary subset (the jester's voters)
 // ============================================================================
 
 service Werewolf {
-  // The whole game. First ClientMsg on the stream MUST be a JoinMsg;
-  // the server binds the stream to the assigned player_id and streams
-  // ServerMsgs back for the life of the game.
+  // The whole game. First ClientMsg on the stream MUST be a JoinMsg, and it
+  // must arrive within the server's join timeout or the stream is aborted.
   rpc Play(stream ClientMsg) returns (stream ServerMsg);
 }
 
@@ -26,14 +28,15 @@ service Werewolf {
 // ---------------------------------------------------------------------------
 message ClientMsg {
   oneof kind {
-    JoinMsg join = 1;   // must be the first message on the stream
-    ChatMsg chat = 2;   // free chat during an allowed phase
-    VoteMsg vote = 3;   // a vote for a target during a voting phase
+    JoinMsg join = 1;       // must be the first message on the stream
+    ChatMsg chat = 2;       // free chat during an allowed phase
+    VoteMsg vote = 3;       // a vote for a target during a voting phase
+    ActionMsg action = 4;   // a role's night action
   }
 }
 
 message JoinMsg {
-  string name = 1;      // display name the player wants
+  string name = 1;          // 1-16 chars, [A-Za-z0-9_-], unique (case-insensitive)
 }
 
 message ChatMsg {
@@ -41,23 +44,29 @@ message ChatMsg {
 }
 
 message VoteMsg {
-  string target = 1;    // name of the player being voted for
+  string target = 1;        // name of the player being voted for
+}
+
+message ActionMsg {
+  string action = 1;        // "save" (doctor) | "revenge" (jester's ghost)
+  string target = 2;        // name of the target player
 }
 
 // ---------------------------------------------------------------------------
 // Server -> Client
 //
-// `scope` documents the comms pattern on the wire — this is the field that
-// makes unicast / multicast / broadcast explicit for the writeup:
+// `scope` documents the comms pattern on the wire:
 //   ALL      -> broadcast to every connected player
 //   WOLVES   -> multicast to the werewolf subset only
 //   PRIVATE  -> unicast to a single player
+//   GROUP    -> multicast to some other ad-hoc subset (e.g. the jester's voters)
 // ---------------------------------------------------------------------------
 message ServerMsg {
   enum Scope {
     ALL = 0;
     WOLVES = 1;
     PRIVATE = 2;
+    GROUP = 3;
   }
 
   enum Type {
@@ -72,7 +81,7 @@ message ServerMsg {
 
   Type type = 1;
   Scope scope = 2;   // which comms pattern delivered this message
-  string phase = 3;  // "lobby","night","day","vote","gameover"
+  string phase = 3;  // "lobby","night","day","gameover", ...
   string sender = 4; // "MODERATOR" or a player name, for CHAT
   string text = 5;
 }
