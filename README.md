@@ -64,6 +64,22 @@ See `werewolf.proto`.
 
 ## Setup
 
+### (Recommended) Use a virtual environment
+
+For quick single-user play, install into a virtual environment so you don't touch system packages:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install grpcio grpcio-tools
+```
+
+Note: for the mutual-TLS setup where each player runs as a different Linux user, a venv in your home directory won't be readable by the other accounts. For those runs, install the gRPC packages system-wide instead:
+
+```bash
+sudo apt install -y python3-grpcio python3-grpc-tools
+```
+
 ```bash
 python3 -m pip install grpcio grpcio-tools
 python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. werewolf.proto
@@ -165,3 +181,14 @@ Failed handshakes appear in the server log as gRPC `Handshake failed` lines.
 - **The CA key is all-powerful:** whoever holds `certs/ca.key` can mint a certificate for any name.
 - **Insiders:** a player with a valid certificate can still open many streams up to the
   server's limits, though every one of them is attributable to their name.
+
+## Troubleshooting
+
+- **`pip install` fails with "externally-managed-environment"** — use the virtual environment above, or install with `pip install --break-system-packages grpcio grpcio-tools`.
+- **`ModuleNotFoundError: No module named 'grpc'` when running as a player account** (`sudo -iu playerN ...`) — gRPC was installed into your own user's site-packages, which the player accounts can't see. Install it system-wide with `sudo apt install -y python3-grpcio python3-grpc-tools`.
+- **`ImportError: cannot import name 'werewolf_pb2'`** — you haven't generated the stubs. Run the `protoc` command in the Setup section. The generated `werewolf_pb2*.py` files are not committed.
+- **`Permission denied` when a player account runs the client** — the project is in a directory other users can't enter. Put it somewhere world-readable, e.g. `/opt/werewolf`, and run `sudo chmod -R a+rX /opt/werewolf`.
+- **`cannot read certs/NAME.key: that certificate belongs to another Linux user`** — run the client as the Linux user that owns that certificate (the one you passed to `make_certs.sh player NAME playerN`), and make sure `chmod 600 certs/*.key` kept the per-user ownership.
+- **`PERMISSION_DENIED: your certificate says you are 'X', not 'Y'`** — with `--tls`, your in-game name comes from your certificate's Common Name. Use `--cert-name` matching your certificate and don't pass a conflicting `--name`.
+- **`stress_idle_streams.py` connects to the wrong process, or `pgrep` returns two PIDs** — match the server exactly with `pgrep -f '^python3 server.py'`.
+- **"Address already in use" / the stress test hits the wrong server** — only run one `server.py` at a time; `pkill -f server.py` before starting another.
